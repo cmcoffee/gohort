@@ -78,6 +78,9 @@ type evalSetting struct {
 	// Builder runs the app tasks through Builder instead of Anvil, and only
 	// those, to measure which builds apps better on the same tasks.
 	Builder bool
+	// AppsOnly runs the app tasks only, as Builder's setting does, so the
+	// two are measured on the same tasks.
+	AppsOnly bool
 	// Effort is the thinking effort every round runs at ("low", "medium"),
 	// "" the agent's own: what a lower effort costs in passes, against what
 	// it saves in time, so a project's Reasoning can be chosen from it
@@ -86,14 +89,15 @@ type evalSetting struct {
 }
 
 var evalSettings = []evalSetting{
-	{"worker-check", "Worker, with the check", "The local model, with each task's check run after its edits.", false, true, false, false, ""},
-	{"worker-check-medium", "Worker, with the check, medium effort", "As Worker, with the check, thinking at medium effort: compare with it to see what thinking less costs.", false, true, false, false, "medium"},
-	{"worker-check-low", "Worker, with the check, low effort", "As Worker, with the check, thinking at low effort, as a project set to Quick does: compare with it to see what thinking less costs.", false, true, false, false, "low"},
-	{"worker-check-noscript", "Worker, with the check, without tool_script", "As Worker, with the check, but with no tool_script: compare the two to see whether scripts save rounds.", false, true, true, false, ""},
-	{"worker-plain", "Worker, without the check", "The local model, with no check: how Anvil worked before.", false, false, false, false, ""},
-	{"lead-check", "Lead, with the check", "The lead model, with each task's check run after its edits.", true, true, false, false, ""},
-	{"lead-plain", "Lead, without the check", "The lead model, with no check.", true, false, false, false, ""},
-	{"builder-apps", "Builder, app tasks", "Builder as a person's chat turn in app mode, on the models it is set to use, on the app tasks only: compare with Worker, with the check, on the same tasks.", false, false, false, true, ""},
+	{"worker-check", "Worker, with the check", "The local model, with each task's check run after its edits.", false, true, false, false, false, ""},
+	{"worker-check-medium", "Worker, with the check, medium effort", "As Worker, with the check, thinking at medium effort: compare with it to see what thinking less costs.", false, true, false, false, false, "medium"},
+	{"worker-check-low", "Worker, with the check, low effort", "As Worker, with the check, thinking at low effort, as a project set to Quick does: compare with it to see what thinking less costs.", false, true, false, false, false, "low"},
+	{"worker-check-noscript", "Worker, with the check, without tool_script", "As Worker, with the check, but with no tool_script: compare the two to see whether scripts save rounds.", false, true, true, false, false, ""},
+	{"worker-plain", "Worker, without the check", "The local model, with no check: how Anvil worked before.", false, false, false, false, false, ""},
+	{"lead-check", "Lead, with the check", "The lead model, with each task's check run after its edits.", true, true, false, false, false, ""},
+	{"lead-plain", "Lead, without the check", "The lead model, with no check.", true, false, false, false, false, ""},
+	{"worker-apps", "Worker, with the check, app tasks", "As Worker, with the check, on the app tasks only: compare with Builder, app tasks, on the same tasks.", false, true, false, false, true, ""},
+	{"builder-apps", "Builder, app tasks", "Builder as a person's chat turn in app mode, on the models it is set to use, on the app tasks only: compare with Worker, with the check, on the same tasks.", false, false, false, true, false, ""},
 }
 
 func evalSettingByID(id string) (evalSetting, bool) {
@@ -358,9 +362,11 @@ func evalAppSlug(task evalTask) (string, error) {
 }
 
 // evalOne runs task in a fresh copy under dir and scores it.
-func (T *Anvil) evalOne(ctx context.Context, run evalRunner, user, runID string, task evalTask, s evalSetting, dir string) evalTaskResult {
-	res := evalTaskResult{Task: task.Name, Title: task.Title, Lang: task.Lang}
+func (T *Anvil) evalOne(ctx context.Context, run evalRunner, user, runID string, task evalTask, s evalSetting, dir string) (res evalTaskResult) {
+	res = evalTaskResult{Task: task.Name, Title: task.Title, Lang: task.Lang}
 	start := time.Now()
+	// On the named result: set on a local after the return, it never reached
+	// the result returned, and every task's time read 0s.
 	defer func() { res.Seconds = time.Since(start).Round(time.Second).Seconds() }()
 	fail := func(err error) evalTaskResult {
 		res.Error = err.Error()
@@ -454,7 +460,7 @@ func (T *Anvil) runEval(ctx context.Context, run evalRunner, user string, s eval
 		st.set("Could not read the task set: " + err.Error())
 		return r
 	}
-	if s.Builder {
+	if s.Builder || s.AppsOnly {
 		var apps []evalTask
 		for _, t := range tasks {
 			if t.isApp() {

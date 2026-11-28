@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call Log</title>
+<style>
+  :root { color-scheme: light dark; --bg: #0f1420; --card: #172033; --text: #e8edf5; --muted: #8ea0bd; --accent: #5b8cff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px; }
+  h1 { margin: 0 0 16px; font-size: 1.6rem; }
+  .card { background: var(--card); border-radius: 14px; padding: 18px; margin-bottom: 14px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Call Log</h1>
+  <div class="card" id="content"><span class="muted">Loading...</span></div>
+</main>
+<script>
+// The backend: app.data(name, params) loads a data source (data/<name>.py),
+// app.action(name, body) runs an action, app.records.list/save/remove keep
+// this person's entries, and app.onChange(fn) fires when they change.
+async function load() {
+  const el = document.getElementById('content');
+  try {
+    // const d = await app.data('main');
+    el.innerHTML = '<span class="muted">Design the page here.</span>';
+  } catch (e) {
+    el.textContent = 'Could not load: ' + e.message;
+  }
+}
+load();
+app.onChange(load);
+</script>
+</body>
+</html>

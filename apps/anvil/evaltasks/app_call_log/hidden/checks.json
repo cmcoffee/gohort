@@ -1,0 +1,201 @@
+[
+  {
+    "name": "logging a call saves it",
+    "script": "log_call",
+    "inputs": {
+      "caller": "Ana",
+      "phone": "555-0100",
+      "direction": "inbound",
+      "minutes": "7",
+      "outcome": "resolved"
+    },
+    "expect": [
+      {
+        "path": "records.0.kind",
+        "equals": "call"
+      },
+      {
+        "path": "records.0.phone",
+        "equals": "555-0100"
+      },
+      {
+        "path": "records.0.minutes",
+        "equals": 7
+      },
+      {
+        "path": "records.0.outcome",
+        "equals": "resolved"
+      }
+    ]
+  },
+  {
+    "name": "a call with no phone number is refused",
+    "script": "log_call",
+    "inputs": {
+      "caller": "Ana",
+      "phone": "",
+      "direction": "inbound",
+      "minutes": "7",
+      "outcome": "resolved"
+    },
+    "expect": [
+      {
+        "path": "message",
+        "contains": "phone"
+      }
+    ]
+  },
+  {
+    "name": "logging a call returns the Salesforce stub's task id",
+    "script": "log_call",
+    "inputs": {
+      "caller": "Ana",
+      "phone": "555-0100",
+      "direction": "inbound",
+      "minutes": "7",
+      "outcome": "resolved"
+    },
+    "expect": [
+      {
+        "path": "result.salesforce_task_id",
+        "contains": "00T"
+      }
+    ]
+  },
+  {
+    "name": "calls lists every call",
+    "script": "calls",
+    "records": [
+      {
+        "id": "c1",
+        "kind": "call",
+        "caller": "Ana",
+        "phone": "555-0100",
+        "direction": "inbound",
+        "minutes": 7,
+        "outcome": "resolved"
+      },
+      {
+        "id": "c2",
+        "kind": "call",
+        "caller": "Ben",
+        "phone": "555-0101",
+        "direction": "outbound",
+        "minutes": 10,
+        "outcome": "escalated"
+      },
+      {
+        "id": "c3",
+        "kind": "call",
+        "caller": "Cy",
+        "phone": "555-0102",
+        "direction": "inbound",
+        "minutes": 5,
+        "outcome": "follow_up"
+      }
+    ],
+    "expect": [
+      {
+        "path": "",
+        "count": 3
+      },
+      {
+        "path": "0.caller",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "name": "today adds the calls up",
+    "script": "today",
+    "records": [
+      {
+        "id": "c1",
+        "kind": "call",
+        "caller": "Ana",
+        "phone": "555-0100",
+        "direction": "inbound",
+        "minutes": 7,
+        "outcome": "resolved"
+      },
+      {
+        "id": "c2",
+        "kind": "call",
+        "caller": "Ben",
+        "phone": "555-0101",
+        "direction": "outbound",
+        "minutes": 10,
+        "outcome": "escalated"
+      },
+      {
+        "id": "c3",
+        "kind": "call",
+        "caller": "Cy",
+        "phone": "555-0102",
+        "direction": "inbound",
+        "minutes": 5,
+        "outcome": "follow_up"
+      }
+    ],
+    "expect": [
+      {
+        "path": "calls",
+        "equals": 3
+      },
+      {
+        "path": "minutes",
+        "equals": 22
+      },
+      {
+        "path": "escalated",
+        "equals": 1
+      }
+    ]
+  },
+  {
+    "name": "the page shows the totals and the calls",
+    "records": [
+      {
+        "id": "c1",
+        "kind": "call",
+        "caller": "Ana",
+        "phone": "555-0100",
+        "direction": "inbound",
+        "minutes": 7,
+        "outcome": "resolved"
+      },
+      {
+        "id": "c2",
+        "kind": "call",
+        "caller": "Ben",
+        "phone": "555-0101",
+        "direction": "outbound",
+        "minutes": 10,
+        "outcome": "escalated"
+      },
+      {
+        "id": "c3",
+        "kind": "call",
+        "caller": "Cy",
+        "phone": "555-0102",
+        "direction": "inbound",
+        "minutes": 5,
+        "outcome": "follow_up"
+      }
+    ],
+    "steps": [
+      {
+        "see": "3 calls"
+      },
+      {
+        "see": "22 min"
+      },
+      {
+        "see": "1 escalated"
+      },
+      {
+        "see": "Ana"
+      }
+    ]
+  }
+]

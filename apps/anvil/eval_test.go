@@ -426,3 +426,20 @@ func TestBuilderIsMeasuredOnTheAppTasksOnly(t *testing.T) {
 		}
 	}
 }
+
+// A task's time is kept on its result: it was set after the result had been
+// returned, and every task read 0s.
+func TestATasksTimeIsKept(t *testing.T) {
+	evalWorkspace(t)
+	T := evalApp(t)
+	tasks, _ := loadEvalTasks()
+	run := func(ctx context.Context, c *toolCtx, task evalTask, s evalSetting) (evalAgentResult, error) {
+		time.Sleep(1100 * time.Millisecond)
+		return evalAgentResult{Reply: "Could not do it."}, nil
+	}
+	s, _ := evalSettingByID("worker-plain")
+	res := T.evalOne(context.Background(), run, "root", "r1", tasks[0], s, filepath.Join(WorkspacesDir(), "timed"))
+	if res.Seconds < 1 {
+		t.Errorf("a task that took over a second kept %v seconds", res.Seconds)
+	}
+}

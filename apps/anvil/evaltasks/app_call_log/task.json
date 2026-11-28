@@ -1,0 +1,8 @@
+{
+  "title": "Build an app from scratch",
+  "lang": "App",
+  "kind": "app",
+  "request": "This folder is a new gohort app, with only its starter page. Build it into a call log for a small support desk:\n\n- An action named log_call takes caller (a name), phone, direction (inbound or outbound), minutes (a whole number) and outcome (resolved, follow_up or escalated), and saves the call as a record of kind \"call\" with those fields. A call with no phone number is refused, with a message saying the phone number is needed.\n- Salesforce comes later: write lib/salesforce.py with a function log_task(phone, outcome) that is a stub, making no network call and returning a made-up id starting with \"00T\". log_call calls it and returns the id in its result as salesforce_task_id.\n- A data source named calls returns the calls as a list, each with caller, phone, direction, minutes and outcome.\n- A data source named today returns {\"calls\": <how many calls>, \"minutes\": <their minutes added up>, \"escalated\": <how many were escalated>} over the call records.\n- The page lists the calls with each caller and outcome, has a form to log one, and shows the totals as \"3 calls \u00b7 22 min \u00b7 1 escalated\".\n\nAdd checks for what it does.",
+  "check": "",
+  "hidden_check": ""
+}

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call Log</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #0f1420; color: #e8edf5; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+  label { display: block; margin: 8px 0 4px; }
+  input, select { font: inherit; padding: 6px 8px; }
+  button { font: inherit; padding: 6px 12px; margin-top: 8px; }
+  .muted { color: #8ea0bd; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Call Log</h1>
+  <p id="totals" class="muted">Loading...</p>
+  <h2>Log a call</h2>
+  <label for="caller">Caller</label><input id="caller" placeholder="Caller">
+  <label for="phone">Phone</label><input id="phone" placeholder="Phone">
+  <label for="direction">Direction</label><select id="direction"><option>inbound</option><option>outbound</option></select>
+  <label for="minutes">Minutes</label><input id="minutes" type="number" min="0" placeholder="Minutes">
+  <label for="outcome">Outcome</label><select id="outcome"><option>resolved</option><option>follow_up</option><option>escalated</option></select>
+  <div><button id="log">Log call</button></div>
+  <h2>Calls</h2>
+  <ul id="list"></ul>
+</main>
+<script>
+const v = id => document.getElementById(id).value;
+async function load() {
+  const t = await app.data('today');
+  document.getElementById('totals').textContent = t.calls + ' calls \u00b7 ' + t.minutes + ' min \u00b7 ' + t.escalated + ' escalated';
+  const rows = await app.data('calls');
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  for (const c of rows) {
+    const li = document.createElement('li');
+    li.textContent = c.caller + ' (' + c.phone + ') - ' + c.outcome;
+    list.appendChild(li);
+  }
+  if (!rows.length) list.innerHTML = '<li class="muted">No calls yet.</li>';
+}
+document.getElementById('log').onclick = async () => {
+  const r = await app.action('log_call', {caller: v('caller'), phone: v('phone'), direction: v('direction'), minutes: v('minutes'), outcome: v('outcome')});
+  if (r && r.message) app.alert(r.message);
+  load();
+};
+load();
+app.onChange(load);
+</script>
+</body>
+</html>

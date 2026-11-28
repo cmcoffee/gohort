@@ -1,0 +1,13 @@
+{
+  "name": "Call Log",
+  "slug": "anvil-eval-calllog",
+  "description": "Calls logged by the people who take them.",
+  "sections": [
+    {
+      "height": "100vh",
+      "html_file": "page.html",
+      "id": "page",
+      "kind": "html"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "name": "Call Log",
+  "slug": "anvil-eval-calllog",
+  "description": "Calls logged by the people who take them.",
+  "sections": [
+    {
+      "height": "100vh",
+      "html_file": "page.html",
+      "id": "page",
+      "kind": "html"
+    }
+  ],
+  "record_key": "id",
+  "data_sources": [
+    {
+      "name": "calls",
+      "file": "data/calls.py"
+    },
+    {
+      "name": "today",
+      "file": "data/today.py"
+    }
+  ],
+  "actions": [
+    {
+      "name": "log_call",
+      "label": "Log call",
+      "file": "actions/log_call.py",
+      "inputs": {
+        "caller": "the caller's name",
+        "phone": "their phone number",
+        "direction": "inbound or outbound",
+        "minutes": "how long, in whole minutes",
+        "outcome": "resolved, follow_up or escalated"
+      }
+    }
+  ]
+}
