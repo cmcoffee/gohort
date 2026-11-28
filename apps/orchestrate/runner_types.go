@@ -121,6 +121,14 @@ type chatTurn struct {
 	// commitAsked is set once the turn has been told to commit verified
 	// work in an app's history, so it is told once (uncommittedWorkNotice).
 	commitAsked bool
+	// foldersSeen is each app folder in the workspace as it stood when the
+	// turn began, or after its last checkout or publish here, by its path in
+	// the workspace; foldersTaken says the turn's starting look was taken;
+	// unsavedAsked is set once the turn has been told about a folder it
+	// changed and did not save (unsavedFolderNotice).
+	foldersSeen   map[string]folderMark
+	foldersTaken  bool
+	unsavedAsked  bool
 	// folderChecks is a check of a working copy that is not installed
 	// (CheckAppFolder): each page check loads it through a preview made for
 	// that one load, beside any preview the person has open.

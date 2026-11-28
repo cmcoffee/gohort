@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appcheck"
@@ -603,5 +604,51 @@ func TestACheckNamesItsScriptTheWayARunFindsIt(t *testing.T) {
 	spec.Checks[0].Script = "their_cases"
 	if err := validateAppChecks(spec); err == nil || !strings.Contains(err.Error(), "their_cases") {
 		t.Errorf("a check naming no script of the app: %v", err)
+	}
+}
+
+// A turn that changed an app folder's files and never saved the app is held
+// once before it finishes: Builder wrote a data source with workspace, never
+// published, and said "The change is complete." Its own checkout and publish
+// are not changes, a folder nobody touched this turn is not either, and a
+// turn that is not Builder's is not held.
+func TestAnUnsavedAppFolderHoldsTheReply(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	turn.agent.ID = "seed-builder" // Builder works in a workspace of its own
+	ws, _ := turn.turnWorkspace()
+	os.MkdirAll(filepath.Join(ws, "old.app"), 0o755)
+	os.WriteFile(filepath.Join(ws, "old.app", "app.json"), []byte(`{"name":"Old","slug":"old"}`), 0o644)
+	turn.markAppFolders()
+
+	if _, err := turn.syncedFolder(map[string]any{"name": "Wx"}, turn.appDefCheckout); err != nil {
+		t.Fatal(err)
+	}
+	if n := turn.unsavedFolderNotice(); n != "" {
+		t.Fatalf("a checkout is not an unsaved change: %s", n)
+	}
+	time.Sleep(20 * time.Millisecond)
+	os.MkdirAll(filepath.Join(ws, "wx.app", "data"), 0o755)
+	os.WriteFile(filepath.Join(ws, "wx.app", "data", "now.py"), []byte("print('{}')\n"), 0o644)
+	n := turn.unsavedFolderNotice()
+	if !strings.Contains(n, "data/now.py") || !strings.Contains(n, `action=\"publish\"`) && !strings.Contains(n, `action="publish"`) || strings.Contains(n, "old.app") {
+		t.Fatalf("a changed, unsaved folder should hold the reply, naming the file and the publish: %q", n)
+	}
+	if again := turn.unsavedFolderNotice(); again != "" {
+		t.Errorf("said once a turn: %q", again)
+	}
+
+	turn.unsavedAsked = false
+	if _, err := turn.syncedFolder(map[string]any{"dir": "wx.app"}, turn.appDefPublish); err != nil {
+		t.Fatal(err)
+	}
+	if n := turn.unsavedFolderNotice(); n != "" {
+		t.Errorf("a published folder is saved: %s", n)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	os.WriteFile(filepath.Join(ws, "wx.app", "data", "now.py"), []byte("print('{\"t\": 1}')\n"), 0o644)
+	turn.agent.ID = "someone-else"
+	if n := turn.unsavedFolderNotice(); n != "" {
+		t.Errorf("a turn that does not author is not held: %s", n)
 	}
 }

@@ -269,9 +269,9 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			case "delete":
 				return t.appDefDelete(args)
 			case "checkout":
-				return t.appDefCheckout(args)
+				return t.syncedFolder(args, t.appDefCheckout)
 			case "publish":
-				return t.appDefPublish(args)
+				return t.syncedFolder(args, t.appDefPublish)
 			case "run":
 				return t.appDefRun(args)
 			case "pack":

@@ -611,11 +611,17 @@ func (t *chatTurn) finishCheck() func(string) (string, string) {
 	if build == nil && app == nil && !agentCanAuthor(t.agent) {
 		return nil
 	}
+	t.markAppFolders()
 	return func(reply string) (string, string) {
 		if build != nil {
 			if notice, strike := build(reply); strings.TrimSpace(notice) != "" {
 				return notice, strike
 			}
+		}
+		// An app folder changed and never saved: the app does not have the
+		// change, and none of its checks ran on it (app_folder.go).
+		if notice := t.unsavedFolderNotice(); notice != "" {
+			return notice, ""
 		}
 		// Finished, tested work goes in the app's history before the turn
 		// ends (app_history.go).

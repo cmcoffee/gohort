@@ -35,6 +35,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appcheck"
@@ -102,6 +103,146 @@ func (t *chatTurn) appFolderDir(args map[string]any) (abs, rel string, err error
 		t.session.AppFolder = rel
 	}
 	return abs, rel, err
+}
+
+// folderMark is an app folder as it stood at one moment: its newest file's
+// time, which file that is, and how many files it holds. Taken from the files
+// themselves, not the clock: the filesystem stamps a file with its own clock,
+// which on a network mount runs apart from this process's.
+type folderMark struct {
+	at    time.Time
+	name  string
+	files int
+}
+
+// unsavedFolderMaxFiles bounds the files looked at in one app folder.
+const unsavedFolderMaxFiles = 2000
+
+// markAppFolders takes the turn's starting look at its workspace's app
+// folders, the first time it is asked (when the turn's checks are built).
+func (t *chatTurn) markAppFolders() {
+	if t.foldersTaken || !agentCanAuthor(t.agent) {
+		return
+	}
+	t.foldersTaken = true
+	ws, _ := t.turnWorkspace()
+	if ws == "" {
+		return
+	}
+	for _, rel := range appFoldersIn(ws, t.session) {
+		t.markFolder(rel, markOf(filepath.Join(ws, rel)))
+	}
+}
+
+func (t *chatTurn) markFolder(rel string, m folderMark) {
+	if t.foldersSeen == nil {
+		t.foldersSeen = map[string]folderMark{}
+	}
+	t.foldersSeen[filepath.Clean(rel)] = m
+}
+
+// syncedFolder runs a folder action (checkout, publish) and, when it worked,
+// takes the folder as matching the app now, so the finish check does not
+// take what the action itself wrote for an unsaved change.
+func (t *chatTurn) syncedFolder(args map[string]any, action func(map[string]any) (string, error)) (string, error) {
+	out, err := action(args)
+	if err != nil {
+		return out, err
+	}
+	if abs, rel, rerr := t.appFolderDir(args); rerr == nil {
+		t.markFolder(rel, markOf(abs))
+	}
+	return out, nil
+}
+
+// unsavedFolderNotice holds back a reply that would end the turn while an app
+// folder in the turn's workspace has changed during this turn, since the
+// turn began or since its last checkout or publish. Observed in Measure:
+// Builder added a data source by writing the folder's files with workspace,
+// never saved the app, and answered "The change is complete." The script had
+// a syntax error that the save's script check would have caught, and the app
+// never had the change at all. Said once a turn; "" otherwise.
+func (t *chatTurn) unsavedFolderNotice() string {
+	if t.unsavedAsked || !t.foldersTaken || !agentCanAuthor(t.agent) {
+		return ""
+	}
+	ws, _ := t.turnWorkspace()
+	if ws == "" {
+		return ""
+	}
+	for _, rel := range appFoldersIn(ws, t.session) {
+		now := markOf(filepath.Join(ws, rel))
+		was, seen := t.foldersSeen[rel]
+		if seen && !now.at.After(was.at) && now.files == was.files {
+			continue
+		}
+		changed := now.name
+		if seen && !now.at.After(was.at) {
+			changed = "a file" // removed: the newest is as it was
+		}
+		t.unsavedAsked = true
+		return fmt.Sprintf("Your reply was held back: %s changed during this turn (%s) and the app was not saved after it, so the app does not have the change and none of its checks ran on it. Install it with app_def(action=\"publish\", dir=%q), fix what its checks report, then give your reply. If you meant to leave the change unsaved, say so plainly in your reply instead of calling the work done.", rel+"/", changed, rel)
+	}
+	return ""
+}
+
+// appFoldersIn is the app folders in workspace ws: each folder at its top
+// holding an app.json, and the session's own app folder wherever it is.
+func appFoldersIn(ws string, sess *ChatSession) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(rel string) {
+		rel = filepath.Clean(rel)
+		if seen[rel] {
+			return
+		}
+		if fi, err := os.Stat(filepath.Join(ws, rel, "app.json")); err == nil && fi.Mode().IsRegular() {
+			seen[rel] = true
+			out = append(out, rel)
+		}
+	}
+	entries, _ := os.ReadDir(ws)
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			add(e.Name())
+		}
+	}
+	if sess != nil && strings.TrimSpace(sess.AppFolder) != "" {
+		if abs, err := ResolveWorkspacePath(ws, sess.AppFolder); err == nil {
+			if rel, err := filepath.Rel(ws, abs); err == nil {
+				add(rel)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// markOf is dir as it stands, skipping hidden folders such as .git.
+func markOf(dir string) folderMark {
+	var m folderMark
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if p != dir && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if m.files++; m.files > unsavedFolderMaxFiles {
+			return filepath.SkipAll
+		}
+		if fi, err := d.Info(); err == nil && fi.ModTime().After(m.at) {
+			m.at = fi.ModTime()
+			if rel, err := filepath.Rel(dir, p); err == nil {
+				m.name = filepath.ToSlash(rel)
+			}
+		}
+		return nil
+	})
+	return m
 }
 
 func scriptExt(language string) string {
