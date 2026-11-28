@@ -126,7 +126,66 @@ call center difference did not hold up unassisted and scored the same way.
 What is left for this proposal is maintenance (one way of building apps),
 which is a choice on its own, not a measured win. Taken instead: Anvil's
 pieces come to Builder's tools, starting with its edit matcher, now shared
-as `core/editmatch` and used by `patch_html` and script patches.
+as `core/editmatch` and used by `patch_html`, script patches and
+`workspace` edit.
+
+### After Anvil's pieces came to Builder
+
+**Third runs** (0.9.743: the shared matcher in Builder's patches and in
+Anvil's `edit_file`, moved to `core/editmatch`):
+
+| task | Builder 1 | Anvil | Builder 2 |
+|---|---|---|---|
+| Fix an app's numbers | pass 1m40s | pass 1m11s | pass 4m02s |
+| Build an app from scratch | pass 4m12s | pass 7m55s | pass 6m09s |
+| Add a field to an app | fail 3m59s | pass 2m26s | fail 4m04s |
+| Add a data source to an app | fail 1m08s | pass 4m04s | pass 4m11s |
+| total | 2 of 4, 10m59s | 4 of 4, 15m35s | 3 of 4, 18m25s |
+
+Anvil after the move: its best round. Builder's "Add a field" failures were
+the required-field mistake again. Its first data-source failure was new:
+it wrote `data/progress.py` and the page into the app folder with
+`workspace` alone (10 calls, no `app_def`), never saved the app, and
+answered "The change is complete." The script had an unclosed parenthesis
+that the save's script check would have caught, and in real use the app
+would never have had the change. No `patch_html` call was made in the
+round, so the shared matcher was not exercised live on Builder's side.
+
+**Fourth runs** (0.9.744: Builder is held once when it changed an app
+folder and never saved the app; Builder only):
+
+| task | Builder 1 | Builder 2 |
+|---|---|---|
+| Fix an app's numbers | pass 1m44s | pass 2m04s |
+| Build an app from scratch | pass 15m16s (at the cap) | fail 15m55s (at the cap) |
+| Add a field to an app | fail 3m47s | fail 3m25s |
+| Add a data source to an app | pass 2m15s | pass 10m35s |
+| total | 3 of 4, 23m02s | 2 of 4, 31m59s |
+
+Every turn saved through `app_def`, and the data-source task passed both
+times. Whether the hold fired or Builder saved on its own is not known: the
+hold is logged only at debug level, and the throwaway did not run with it.
+The other misses: from scratch, 5 of 6 hidden checks passed and the page
+check failed, its page still showing "Refreshing..." instead of the calls,
+with Builder rewriting its own page checks (it took them for racing the
+page's load) when the cap hit; "Add a field" once more made the field
+required, and once crashed when the interval was left out and saved "3" as
+text instead of a number.
+
+**All four rounds:**
+
+| | rounds 1 and 2 | rounds 3 and 4 | all |
+|---|---|---|---|
+| Anvil | 12 of 14 | 4 of 4 (one run) | 16 of 18 |
+| Builder | 12 of 14 | 10 of 16 | 22 of 30 |
+
+None of Builder's misses since the changes trace to the matcher or the
+hold, and the sample is too small to say why its later rounds scored
+lower. Anvil is the steadier of the two. Most of Builder's misses are
+mistakes the model makes in either agent ("Add a field"), and long
+from-scratch turns that run into the cap. The lesson that carries over is
+Anvil's habit of running its checks before calling work done; the
+unsaved-folder hold is one piece of it.
 
 ## Stored changes
 
